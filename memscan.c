@@ -6,7 +6,7 @@
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 
-// 新版 iOS SDK 不支持直接 include mach_vm.h，手动声明
+// 新版 iOS SDK 不支持 mach_vm.h，手动声明
 kern_return_t mach_vm_region(
     vm_map_t target_task,
     mach_vm_address_t *address,
@@ -31,8 +31,6 @@ void search_string_in_task(mach_port_t task, const char *str) {
 
     mach_vm_address_t addr = 0;
     mach_vm_size_t region_size = 0;
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t info_count;
     kern_return_t kr;
     int total_found = 0;
     int region_count = 0;
@@ -40,7 +38,10 @@ void search_string_in_task(mach_port_t task, const char *str) {
     printf("开始扫描字符串: \"%s\" (长度 %zu)\n", str, str_len);
 
     while (1) {
-        info_count = VM_REGION_BASIC_INFO_COUNT_64;   // 必须每次循环重置！
+        // 把 info 和 info_count 放在循环内部，每次都是全新值
+        vm_region_basic_info_data_64_t info;
+        mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+
         kr = mach_vm_region(task, &addr, &region_size, VM_REGION_BASIC_INFO_64,
                             (vm_region_info_t)&info, &info_count, NULL);
         if (kr != KERN_SUCCESS) {
