@@ -6,7 +6,7 @@
 #include <sys/sysctl.h>
 #include <mach/mach.h>
 
-// 新版 iOS SDK 不再支持直接 include mach_vm.h，这里手动声明需要的函数
+// 新版 iOS SDK 不支持直接 include mach_vm.h，手动声明
 kern_return_t mach_vm_region(
     vm_map_t target_task,
     mach_vm_address_t *address,
@@ -32,17 +32,26 @@ void search_string_in_task(mach_port_t task, const char *str) {
     mach_vm_address_t addr = 0;
     mach_vm_size_t region_size = 0;
     vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t info_count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_msg_type_number_t info_count;
     kern_return_t kr;
     int total_found = 0;
+    int region_count = 0;
 
     printf("开始扫描字符串: \"%s\" (长度 %zu)\n", str, str_len);
 
     while (1) {
+        info_count = VM_REGION_BASIC_INFO_COUNT_64;   // 必须每次循环重置！
         kr = mach_vm_region(task, &addr, &region_size, VM_REGION_BASIC_INFO_64,
                             (vm_region_info_t)&info, &info_count, NULL);
         if (kr != KERN_SUCCESS) {
             break;
+        }
+
+        region_count++;
+
+        if (region_size == 0) {
+            addr += 0x1000;
+            continue;
         }
 
         if ((info.protection & VM_PROT_READ) != 0) {
@@ -50,18 +59,21 @@ void search_string_in_task(mach_port_t task, const char *str) {
             while (current < addr + region_size) {
                 mach_vm_size_t to_read = (addr + region_size - current > CHUNK_SIZE) ? 
                                          CHUNK_SIZE : (addr + region_size - current);
-                
+
                 vm_offset_t data_ptr = 0;
                 mach_msg_type_number_t data_size = 0;
+
                 kr = mach_vm_read(task, current, to_read, &data_ptr, &data_size);
                 if (kr == KERN_SUCCESS && data_size > 0) {
                     char *base = (char *)data_ptr;
                     size_t remaining = data_size;
                     char *match = (char *)memmem(base, remaining, str, str_len);
+
                     while (match != NULL) {
                         mach_vm_address_t found_addr = current + (match - base);
                         printf("  [找到] 0x%016llx\n", (unsigned long long)found_addr);
                         total_found++;
+
                         size_t offset = (match - base) + str_len;
                         if (offset >= remaining) break;
                         match = (char *)memmem(base + offset, remaining - offset, str, str_len);
@@ -75,7 +87,7 @@ void search_string_in_task(mach_port_t task, const char *str) {
         if (addr == 0 || addr > 0x7fffffffffffffffULL) break;
     }
 
-    printf("扫描完成，共找到 %d 处匹配\n\n", total_found);
+    printf("扫描完成，共扫描 %d 个内存区域，找到 %d 处匹配\n\n", region_count, total_found);
 }
 
 pid_t get_pid_by_name(const char *name) {
