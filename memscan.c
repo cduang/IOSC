@@ -5,45 +5,25 @@
 #include <sys/types.h>
 #include <sys/sysctl.h>
 #include <mach/mach.h>
-#include <mach/mach_vm.h>
 
-#define CHUNK_SIZE 0x4000ULL  // 16KB chunks
+// 新版 iOS SDK 不再支持直接 include mach_vm.h，这里手动声明需要的函数
+kern_return_t mach_vm_region(
+    vm_map_t target_task,
+    mach_vm_address_t *address,
+    mach_vm_size_t *size,
+    vm_region_flavor_t flavor,
+    vm_region_info_t info,
+    mach_msg_type_number_t *infoCnt,
+    mach_port_t *object_name);
 
-// 最小 kinfo_proc 定义（绕过 libproc.h，兼容 iOS SDK 交叉编译）
-struct kinfo_proc {
-    struct {
-        pid_t p_pid;
-        char  p_comm[16];   // 进程名（最长16字符）
-    } kp_proc;
-};
+kern_return_t mach_vm_read(
+    vm_map_t target_task,
+    mach_vm_address_t address,
+    mach_vm_size_t size,
+    vm_offset_t *data,
+    mach_msg_type_number_t *dataCnt);
 
-pid_t get_pid_by_name(const char *name) {
-    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
-    size_t size = 0;
-
-    if (sysctl(mib, 4, NULL, &size, NULL, 0) != 0) {
-        return 0;
-    }
-
-    struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
-    if (!procs) return 0;
-
-    if (sysctl(mib, 4, procs, &size, NULL, 0) != 0) {
-        free(procs);
-        return 0;
-    }
-
-    int nproc = size / sizeof(struct kinfo_proc);
-    pid_t found_pid = 0;
-    for (int i = 0; i < nproc; i++) {
-        if (strcmp(procs[i].kp_proc.p_comm, name) == 0) {
-            found_pid = procs[i].kp_proc.p_pid;
-            break;
-        }
-    }
-    free(procs);
-    return found_pid;
-}
+#define CHUNK_SIZE 0x4000ULL
 
 void search_string_in_task(mach_port_t task, const char *str) {
     size_t str_len = strlen(str);
@@ -98,6 +78,34 @@ void search_string_in_task(mach_port_t task, const char *str) {
     printf("扫描完成，共找到 %d 处匹配\n\n", total_found);
 }
 
+pid_t get_pid_by_name(const char *name) {
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t size = 0;
+
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) != 0) {
+        return 0;
+    }
+
+    struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+    if (!procs) return 0;
+
+    if (sysctl(mib, 4, procs, &size, NULL, 0) != 0) {
+        free(procs);
+        return 0;
+    }
+
+    int nproc = size / sizeof(struct kinfo_proc);
+    pid_t found_pid = 0;
+    for (int i = 0; i < nproc; i++) {
+        if (strcmp(procs[i].kp_proc.p_comm, name) == 0) {
+            found_pid = procs[i].kp_proc.p_pid;
+            break;
+        }
+    }
+    free(procs);
+    return found_pid;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 3) {
         printf("用法: %s <进程名> <要搜索的字符串>\n", argv[0]);
@@ -113,7 +121,7 @@ int main(int argc, char *argv[]) {
     pid_t pid = get_pid_by_name(proc_name);
     if (pid == 0) {
         printf("错误: 找不到名为 '%s' 的进程\n", proc_name);
-        printf("提示: 用 'ps aux' 查看实际进程名（p_comm 最长16字符）\n");
+        printf("提示: 用 'ps aux' 查看实际进程名\n");
         return 1;
     }
     printf("找到 PID: %d\n", pid);
