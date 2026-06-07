@@ -3,30 +3,46 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
-#include <libproc.h>
+#include <sys/sysctl.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 
 #define CHUNK_SIZE 0x4000ULL  // 16KB chunks
 
+// 最小 kinfo_proc 定义（绕过 libproc.h，兼容 iOS SDK 交叉编译）
+struct kinfo_proc {
+    struct {
+        pid_t p_pid;
+        char  p_comm[16];   // 进程名（最长16字符）
+    } kp_proc;
+};
+
 pid_t get_pid_by_name(const char *name) {
-    pid_t pids[4096];
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, pids, sizeof(pids));
-    if (bytes <= 0) {
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t size = 0;
+
+    if (sysctl(mib, 4, NULL, &size, NULL, 0) != 0) {
         return 0;
     }
-    int pid_count = bytes / sizeof(pid_t);
-    for (int i = 0; i < pid_count; i++) {
-        pid_t pid = pids[i];
-        if (pid == 0) continue;
-        struct proc_bsdinfo info;
-        if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) == sizeof(info)) {
-            if (strcmp(info.pbi_name, name) == 0) {
-                return pid;
-            }
+
+    struct kinfo_proc *procs = (struct kinfo_proc *)malloc(size);
+    if (!procs) return 0;
+
+    if (sysctl(mib, 4, procs, &size, NULL, 0) != 0) {
+        free(procs);
+        return 0;
+    }
+
+    int nproc = size / sizeof(struct kinfo_proc);
+    pid_t found_pid = 0;
+    for (int i = 0; i < nproc; i++) {
+        if (strcmp(procs[i].kp_proc.p_comm, name) == 0) {
+            found_pid = procs[i].kp_proc.p_pid;
+            break;
         }
     }
-    return 0;
+    free(procs);
+    return found_pid;
 }
 
 void search_string_in_task(mach_port_t task, const char *str) {
@@ -97,7 +113,7 @@ int main(int argc, char *argv[]) {
     pid_t pid = get_pid_by_name(proc_name);
     if (pid == 0) {
         printf("错误: 找不到名为 '%s' 的进程\n", proc_name);
-        printf("提示: 用 'ps aux' 或 'pgrep -a client' 查看实际进程名\n");
+        printf("提示: 用 'ps aux' 查看实际进程名（p_comm 最长16字符）\n");
         return 1;
     }
     printf("找到 PID: %d\n", pid);
