@@ -1,0 +1,27 @@
+name: Build iOS Memory Scanner
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compile for iOS 15.6 (arm64e)
+        run: |
+          mkdir -p build
+          clang -target arm64e-apple-ios15.6 \
+            -isysroot $(xcrun --sdk iphoneos --show-sdk-path) \
+            -o build/memscan memscan.c
+          file build/memscan
+          ls -lh build/memscan
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: memscan-ios
+          path: build/memscan
